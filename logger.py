@@ -59,7 +59,7 @@ def get_logger(name: str, *, level: int = logging.INFO) -> logging.Logger:
 
     # 콘솔
     console = logging.StreamHandler(sys.stderr)
-    console.setFormatter(logging.Formatter("[%(asctime)s] %(name)s %(levelname)s — %(message)s"))
+    console.setFormatter(logging.Formatter("[%(asctime)s] %(name)s %(levelname)s - %(message)s"))
     logger.addHandler(console)
 
     # JSONL 파일
