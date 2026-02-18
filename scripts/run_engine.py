@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import subprocess
 import sys
@@ -204,16 +205,29 @@ class ClaudeCLIInvoker:
 
     def _run_subprocess(self, prompt: str) -> str:
         """claude -p 를 subprocess로 실행하고 stdout을 반환한다."""
+        env = os.environ.copy()
+        env.pop("CLAUDECODE", None)  # 중첩 세션 방지 우회
         proc = subprocess.run(
             [self.cmd, "-p", prompt],
             capture_output=True,
-            text=True,
             timeout=self.timeout,
-            encoding="utf-8",
+            shell=(sys.platform == "win32"),  # Windows: .cmd 파일 실행 필요
+            env=env,
         )
+        # Windows cp949 / Linux utf-8 안전 디코딩
+        def _decode(data: bytes) -> str:
+            if not data:
+                return ""
+            try:
+                return data.decode("utf-8")
+            except UnicodeDecodeError:
+                return data.decode("cp949", errors="replace")
+
+        stdout = _decode(proc.stdout)
+        stderr = _decode(proc.stderr)
         if proc.returncode != 0:
-            raise RuntimeError(f"claude -p exited with code {proc.returncode}: {proc.stderr[:500]}")
-        return proc.stdout
+            raise RuntimeError(f"claude -p exited with code {proc.returncode}: {stderr[:500]}")
+        return stdout
 
     @staticmethod
     def _extract_json(raw: str) -> dict[str, Any]:
