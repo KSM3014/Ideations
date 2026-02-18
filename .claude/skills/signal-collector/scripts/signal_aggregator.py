@@ -101,7 +101,12 @@ class URLCache:
         if self.cache_path.exists():
             try:
                 with open(self.cache_path, "r", encoding="utf-8") as f:
-                    self._cache = json.load(f)
+                    data = json.load(f)
+                # 신규 포맷: {"schema_version": ..., "cached_urls": {...}}
+                if isinstance(data, dict) and "cached_urls" in data:
+                    self._cache = data["cached_urls"]
+                else:
+                    self._cache = data
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning(f"URL 캐시 로드 실패, 초기화: {e}")
                 self._cache = {}
@@ -110,8 +115,13 @@ class URLCache:
     def _save(self) -> None:
         """캐시를 파일에 저장한다."""
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "schema_version": "1.0",
+            "cached_urls": self._cache,
+            "last_rotation_index": 0,
+        }
         with open(self.cache_path, "w", encoding="utf-8") as f:
-            json.dump(self._cache, f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
     def _evict_expired(self) -> None:
         """TTL이 만료된 항목을 제거한다."""

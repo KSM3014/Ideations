@@ -54,15 +54,41 @@ class DiscordNotifier:
         score = idea.get("weighted_score", 0)
         problem = idea.get("problem", "")
         solution = idea.get("solution", "")
+        target = idea.get("target_buyer", "")
+        revenue = idea.get("revenue_model", "")
+        scores = idea.get("scores", {})
+        matched_apis = idea.get("matched_apis", [])
+        competitors = idea.get("competitors_count", 0)
+        feasibility = idea.get("feasibility_pct", 0)
+        validation = idea.get("validation_score", 0)
+
+        # NUMR-V 점수 상세
+        score_detail = " / ".join(
+            f"{k}={v}" for k, v in scores.items()
+        ) if scores else "N/A"
+
+        # 매칭된 API 이름 (최대 3개)
+        api_names = ", ".join(
+            a.get("name", a.get("api_id", "?"))[:30] for a in matched_apis[:3]
+        ) if matched_apis else "N/A"
+        if len(matched_apis) > 3:
+            api_names += f" 외 {len(matched_apis) - 3}개"
 
         embed = {
             "title": f"{emoji} {grade}급 아이디어 발견!",
-            "description": f"**{service_name}**\nNUMR-V: {score:.2f} ({grade})",
+            "description": f"**{service_name}**\nNUMR-V 종합: **{score:.2f}** ({grade}급)",
             "color": 0xFFD700 if grade == "S" else 0x4169E1,
             "fields": [
-                {"name": "🎯 문제", "value": problem[:200] or "N/A", "inline": False},
-                {"name": "💡 솔루션", "value": solution[:200] or "N/A", "inline": False},
+                {"name": "🎯 해결할 문제", "value": problem[:300] or "N/A", "inline": False},
+                {"name": "💡 솔루션 개요", "value": solution[:300] or "N/A", "inline": False},
+                {"name": "👥 타겟 고객", "value": target[:150] or "N/A", "inline": True},
+                {"name": "💰 수익 모델", "value": revenue[:150] or "N/A", "inline": True},
+                {"name": "📊 NUMR-V 상세", "value": score_detail, "inline": False},
+                {"name": "🔗 활용 API", "value": api_names, "inline": True},
+                {"name": "🏁 경쟁사", "value": f"{competitors}개 확인" if competitors else "N/A", "inline": True},
+                {"name": "✅ 검증 결과", "value": f"적합도 {feasibility}% / 검증 {validation}점", "inline": True},
             ],
+            "footer": {"text": "API Ideation Engine v6.0"},
         }
         return self._send({"embeds": [embed]})
 
