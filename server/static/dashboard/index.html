@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Ideation Engine v6.0 — 대시보드</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>API Ideation Engine v6.0</h1>
+      <div class="health" v-if="health">
+        <span :class="'status-' + health.status">{{ health.status }}</span>
+        <span v-if="health.last_run_at">최근 실행: {{ formatTime(health.last_run_at) }}</span>
+      </div>
+    </header>
+
+    <nav class="filters">
+      <select v-model="gradeFilter">
+        <option value="">전체 등급</option>
+        <option v-for="g in ['S','A','B','C','D']" :key="g" :value="g">{{ g }}급</option>
+      </select>
+      <input type="date" v-model="dateFilter" placeholder="날짜 필터">
+      <input type="text" v-model="searchQuery" placeholder="키워드 검색...">
+    </nav>
+
+    <section class="stats" v-if="batches.length">
+      <div class="stat-card" v-for="(count, grade) in gradeDist" :key="grade">
+        <span class="grade-badge" :class="'grade-' + grade">{{ grade }}</span>
+        <span class="count">{{ count }}</span>
+      </div>
+    </section>
+
+    <section class="idea-list">
+      <div v-if="loading" class="loading">로딩 중...</div>
+      <div v-else-if="filteredIdeas.length === 0" class="empty">아이디어가 없습니다.</div>
+      <article v-for="idea in filteredIdeas" :key="idea.id || idea.hypothesis_id" class="idea-card">
+        <div class="idea-header">
+          <span class="grade-badge" :class="'grade-' + idea.grade">{{ idea.grade }}</span>
+          <h3>{{ idea.service_name }}</h3>
+          <span class="score">{{ idea.numrv_score?.toFixed(2) || idea.weighted_score?.toFixed(2) }}</span>
+        </div>
+
+        <div class="idea-sections">
+          <details>
+            <summary>개요</summary>
+            <p><strong>문제:</strong> {{ idea.problem }}</p>
+            <p><strong>솔루션:</strong> {{ idea.concept || idea.solution }}</p>
+            <p><strong>타깃:</strong> {{ idea.target || idea.target_buyer }}</p>
+          </details>
+
+          <details>
+            <summary>수익 분석</summary>
+            <p><strong>수익 모델:</strong> {{ idea.revenue_model }}</p>
+          </details>
+
+          <details v-if="idea.market_validation">
+            <summary>시장 검증</summary>
+            <p><strong>경쟁사:</strong> {{ idea.market_validation.competitors?.length || 0 }}개</p>
+            <p><strong>검색 추세:</strong> {{ idea.market_validation.market_proxies?.search_trend }}</p>
+          </details>
+
+          <details v-if="idea.matched_apis">
+            <summary>기술 구현</summary>
+            <p><strong>매칭 API:</strong> {{ idea.matched_apis.length }}개</p>
+            <p><strong>적합도:</strong> {{ idea.feasibility_pct }}%</p>
+          </details>
+        </div>
+
+        <div class="idea-actions">
+          <button @click="sendFeedback(idea, 'like')" class="btn-like">👍</button>
+          <button @click="sendFeedback(idea, 'dislike')" class="btn-dislike">👎</button>
+          <button @click="sendFeedback(idea, 'blacklist')" class="btn-exclude">🚫</button>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "hypotheses": [
+    {
+      "id": "H-001",
+      "service_name": "스마트 교통 알리미",
+      "problem": "실시간 교통 정보 접근성 부족으로 지자체 교통과 업무 비효율",
+      "solution": "공공 교통 API 기반 실시간 대시보드 + 알림 서비스",
+      "target_buyer": "지자체 교통과",
+      "revenue_model": "SaaS 구독 (월 50만원/지자체)",
+      "opportunity_area": "스마트시티",
+      "data_needs": [
+        {"field_name": "실시간 교통량", "description": "시간대별 도로 교통량 데이터", "priority": "필수"},
+        {"field_name": "도로 이벤트", "description": "공사, 사고 등 도로 이벤트 정보", "priority": "선택"}
+      ],
+      "api_suggestions": [
+        {"api_name": "실시간 교통량 API", "reason": "시간대별 교통량 데이터 제공"},
+        {"api_name": "도로 돌발상황 API", "reason": "사고/공사 정보 제공"}
+      ]
+    },
+    {
+      "id": "H-002",
+      "service_name": "농산물 시세 예측기",
+      "problem": "농산물 가격 변동 예측이 어려워 유통업자 손실 발생",
+      "solution": "공공 농산물 시세 API + ML 기반 가격 예측 서비스",
+      "target_buyer": "농산물 유통업체",
+      "revenue_model": "프리미엄 API 구독",
+      "opportunity_area": "농업/유통",
+      "data_needs": [
+        {"field_name": "농산물 도매가격", "description": "일별 농산물 도매 시세", "priority": "필수"},
+        {"field_name": "기상 데이터", "description": "지역별 기온/강수량", "priority": "필수"}
+      ],
+      "api_suggestions": [
+        {"api_name": "농산물 유통정보 API", "reason": "도매시장 시세 데이터"},
+        {"api_name": "기상청 단기예보 API", "reason": "기상 데이터 연계"}
+      ]
+    }
+  ]
+}

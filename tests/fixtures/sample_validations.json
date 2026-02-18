@@ -1,0 +1,30 @@
+[
+  {
+    "hypothesis_id": "H-001",
+    "service_name": "스마트 교통 알리미",
+    "validation_score": 72,
+    "competitor_count": 2,
+    "market_proxy": {
+      "trend_growth": 0.8,
+      "news_mentions": 5,
+      "policy_alignment": 0.9,
+      "funding_signals": 0.3
+    },
+    "timing_fit": "good",
+    "passed": true
+  },
+  {
+    "hypothesis_id": "H-002",
+    "service_name": "농산물 시세 예측기",
+    "validation_score": 45,
+    "competitor_count": 5,
+    "market_proxy": {
+      "trend_growth": 0.4,
+      "news_mentions": 2,
+      "policy_alignment": 0.5,
+      "funding_signals": 0.1
+    },
+    "timing_fit": "neutral",
+    "passed": false
+  }
+]

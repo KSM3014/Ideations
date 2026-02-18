@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data (시크릿 + 대용량)
+data/webhook_config.json
+data/public_api_catalog.sqlite3
+data/embeddings/
+data/signal_cache.json
+
+# Output (실행 산출물)
+output/
+
+# Quality gate logs
+.quality-gate-logs/
+
+# Playwright MCP
+.playwright-mcp/
+
+# Screenshots (임시)
+dashboard_screenshot.png
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Env
+.env
+*.local

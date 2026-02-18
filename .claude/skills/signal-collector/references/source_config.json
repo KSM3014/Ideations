@@ -1,0 +1,119 @@
+{
+  "sources": {
+    "google_trends": {
+      "name": "Google Trends KR",
+      "url": "https://trends.google.co.kr/trending?geo=KR",
+      "description": "Google Trends 한국 실시간 인기 검색어",
+      "timeout_sec": 180,
+      "selectors": {
+        "trend_item": "div.feed-list-wrapper tr",
+        "title": "td:nth-child(2) .title a",
+        "url": "td:nth-child(2) .title a[href]",
+        "snippet": "td:nth-child(2) .summary-text"
+      },
+      "max_items": 20,
+      "retry": {
+        "max_retries": 1,
+        "wait_fixed": 5
+      }
+    },
+    "news": {
+      "name": "Google News KO",
+      "url": "https://news.google.com/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGRqTVhZU0FtdHZHZ0pMVWlnQVAB?hl=ko&gl=KR&ceid=KR:ko",
+      "description": "Google News 한국어 기술 섹션",
+      "timeout_sec": 180,
+      "selectors": {
+        "article_item": "article",
+        "title": "a.JtKRv",
+        "url": "a.JtKRv[href]",
+        "snippet": "div.GI74Re"
+      },
+      "max_items": 15,
+      "retry": {
+        "max_retries": 1,
+        "wait_fixed": 5
+      }
+    },
+    "tech": {
+      "name": "ProductHunt + Hacker News",
+      "urls": {
+        "producthunt": "https://www.producthunt.com/",
+        "hackernews": "https://news.ycombinator.com/"
+      },
+      "description": "ProductHunt 오늘의 제품 + HN 프론트페이지",
+      "timeout_sec": 180,
+      "selectors": {
+        "producthunt": {
+          "product_item": "div[data-test='post-item']",
+          "title": "a[data-test='post-name']",
+          "url": "a[data-test='post-name'][href]",
+          "snippet": "a[data-test='post-tagline']"
+        },
+        "hackernews": {
+          "story_item": "tr.athing",
+          "title": "span.titleline > a",
+          "url": "span.titleline > a[href]",
+          "snippet": "td.subtext"
+        }
+      },
+      "max_items": 20,
+      "retry": {
+        "max_retries": 1,
+        "wait_fixed": 5
+      }
+    },
+    "policy": {
+      "name": "정책 브리핑",
+      "url": "https://www.korea.kr/news/policyBriefingList.do",
+      "description": "대한민국 정책 브리핑 최신 뉴스",
+      "timeout_sec": 180,
+      "selectors": {
+        "policy_item": "ul.list1 > li",
+        "title": "a .text_area .title",
+        "url": "a[href]",
+        "snippet": "a .text_area .lead"
+      },
+      "max_items": 15,
+      "retry": {
+        "max_retries": 1,
+        "wait_fixed": 5
+      }
+    },
+    "funding": {
+      "name": "스타트업 펀딩",
+      "urls": {
+        "platum": "https://platum.kr/archives/category/startup-news",
+        "thevc": "https://thevc.kr/recent"
+      },
+      "description": "한국 스타트업 투자/펀딩 뉴스",
+      "timeout_sec": 180,
+      "selectors": {
+        "platum": {
+          "article_item": "article.post",
+          "title": "h2.entry-title a",
+          "url": "h2.entry-title a[href]",
+          "snippet": "div.entry-content p"
+        },
+        "thevc": {
+          "deal_item": "div.deal-card",
+          "title": "div.deal-title",
+          "url": "a[href]",
+          "snippet": "div.deal-summary"
+        }
+      },
+      "max_items": 15,
+      "retry": {
+        "max_retries": 1,
+        "wait_fixed": 5
+      }
+    }
+  },
+  "defaults": {
+    "timeout_sec": 180,
+    "max_items_per_source": 20,
+    "url_cache_ttl_hours": 24,
+    "rotation_always": ["google_trends"],
+    "rotation_pool": ["news", "tech", "policy", "funding"],
+    "rotation_pick": 2
+  }
+}

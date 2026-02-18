@@ -1,0 +1,23 @@
+[
+  {
+    "source": "google_trends",
+    "keyword": "공공데이터 API 활용",
+    "trend_score": 85,
+    "url": "https://trends.google.com/trends/explore?q=공공데이터+API",
+    "collected_at": "2026-02-18T03:00:00+09:00"
+  },
+  {
+    "source": "google_news",
+    "title": "정부, 2026년 공공데이터 개방 확대 방안 발표",
+    "snippet": "행정안전부가 올해 공공데이터 개방 확대 방안을 발표했다.",
+    "url": "https://example.com/news/1",
+    "collected_at": "2026-02-18T03:00:00+09:00"
+  },
+  {
+    "source": "policy_briefing",
+    "title": "스마트시티 교통 데이터 연계 사업",
+    "snippet": "국토교통부가 스마트시티 교통 데이터 연계 사업을 추진한다.",
+    "url": "https://example.com/policy/1",
+    "collected_at": "2026-02-18T03:00:00+09:00"
+  }
+]
