@@ -165,6 +165,242 @@ class CatalogScanner:
             return None
 
 
+    async def scrape_detail(self, api_id: str) -> dict[str, Any]:
+        """API 상세 페이지에서 파라미터와 오퍼레이션을 추출한다.
+
+        Args:
+            api_id: "DATAGOKR-12345" 형식의 API ID
+
+        Returns:
+            {"parameters": [...], "operations": [...]}
+        """
+        from playwright.async_api import async_playwright
+
+        raw_id = api_id.replace("DATAGOKR-", "")
+        url = f"https://www.data.go.kr/data/{raw_id}/openapi.do"
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(locale="ko-KR")
+            page = await context.new_page()
+
+            try:
+                await page.goto(url, timeout=30000)
+                await page.wait_for_load_state("networkidle", timeout=15000)
+
+                params = await self._extract_params(page)
+                ops = await self._extract_operations(page)
+
+                return {"parameters": params, "operations": ops}
+            except Exception as e:
+                logger.warning(f"Detail scrape failed for {api_id}: {e}")
+                return {"parameters": [], "operations": []}
+            finally:
+                await browser.close()
+
+    async def _wait_swagger(self, page: Any) -> bool:
+        """Swagger UI가 렌더링될 때까지 대기한다. 성공 시 True."""
+        try:
+            await page.wait_for_selector(
+                ".opblock-summary-control, .opblock-summary, .opblock",
+                timeout=10000,
+            )
+            return True
+        except Exception:
+            logger.debug("Swagger UI not found on this page")
+            return False
+
+    async def _extract_params(self, page: Any) -> list[dict[str, str]]:
+        """Swagger UI 파라미터 테이블에서 파라미터를 추출한다."""
+        params = []
+        try:
+            # Swagger UI 렌더링 대기
+            if not await self._wait_swagger(page):
+                return []
+
+            # JS로 오퍼레이션 버튼 클릭 + 파라미터 추출 (원자적 실행)
+            extracted = await page.evaluate("""() => {
+                // 1) 모든 opblock-summary-control 버튼 클릭하여 펼치기
+                const buttons = document.querySelectorAll('.opblock-summary-control');
+                for (const btn of buttons) {
+                    const opblock = btn.closest('.opblock');
+                    // 이미 열려있으면 스킵
+                    if (opblock && opblock.classList.contains('is-open')) continue;
+                    btn.click();
+                }
+                return buttons.length;
+            }""")
+            logger.debug(f"Clicked {extracted} opblock buttons via JS")
+
+            # 클릭 후 파라미터 테이블 렌더링 대기
+            await page.wait_for_timeout(1500)
+
+            # 파라미터 테이블 존재 확인
+            try:
+                await page.wait_for_selector(
+                    "table.parameters tbody tr", timeout=5000
+                )
+            except Exception:
+                logger.debug("No parameter rows found after clicking")
+                return []
+
+            # Swagger UI Parameters 테이블에서 추출
+            extracted = await page.evaluate("""() => {
+                const params = [];
+                const seen = new Set();
+                const rows = document.querySelectorAll('table.parameters tbody tr');
+                for (const row of rows) {
+                    const cells = row.querySelectorAll('td');
+                    if (cells.length < 2) continue;
+
+                    const nameCell = cells[0];
+                    const descCell = cells[1];
+
+                    // 파라미터 이름
+                    const nameEl = nameCell.querySelector('.parameter__name, div:first-child');
+                    let name = nameEl ? nameEl.textContent.trim() : '';
+                    // "serviceKey *" → "serviceKey" (뒤의 * 제거)
+                    name = name.replace(/\\s*\\*.*$/, '').trim();
+
+                    // 중복 제거 (여러 오퍼레이션의 같은 파라미터)
+                    if (!name || name === 'Name' || name === '-' || seen.has(name)) continue;
+                    seen.add(name);
+
+                    // 타입
+                    const typeEl = nameCell.querySelector('.parameter__type, div:nth-child(2)');
+                    const ptype = typeEl ? typeEl.textContent.trim() : 'string';
+
+                    // 설명
+                    const descEl = descCell.querySelector('p');
+                    const desc = descEl ? descEl.textContent.trim() : '';
+
+                    // 필수 여부: CSS 클래스 "parameter__name required"로 판별
+                    const nameDiv = nameCell.querySelector('.parameter__name');
+                    const required = nameDiv && nameDiv.className.includes('required') ? 1 : 0;
+
+                    params.push({
+                        param_name: name,
+                        param_type: ptype || 'string',
+                        description: desc.substring(0, 200),
+                        required: required
+                    });
+                }
+                return params;
+            }""")
+
+            if extracted:
+                params = extracted
+
+        except Exception as e:
+            logger.warning(f"Param extraction failed: {e}")
+
+        return params
+
+    async def _extract_operations(self, page: Any) -> list[dict[str, str]]:
+        """Swagger UI에서 오퍼레이션 정보를 추출한다."""
+        ops = []
+        try:
+            # Swagger UI 렌더링 대기
+            if not await self._wait_swagger(page):
+                return []
+
+            extracted = await page.evaluate("""() => {
+                const ops = [];
+                const opBlocks = document.querySelectorAll(
+                    '.opblock-summary-control, .opblock-summary'
+                );
+                for (const block of opBlocks) {
+                    // HTTP 메서드 (GET, POST 등)
+                    const methodEl = block.querySelector(
+                        '.opblock-summary-method, span:first-child'
+                    );
+                    const method = methodEl
+                        ? methodEl.textContent.trim().toUpperCase()
+                        : 'GET';
+
+                    // 경로 (/info, /history 등)
+                    const pathEl = block.querySelector(
+                        '.opblock-summary-path a, .opblock-summary-path span'
+                    );
+                    const path = pathEl ? pathEl.textContent.trim() : '';
+
+                    // 설명
+                    const descEl = block.querySelector(
+                        '.opblock-summary-description'
+                    );
+                    const desc = descEl ? descEl.textContent.trim() : '';
+
+                    if (path) {
+                        ops.push({
+                            operation_name: path,
+                            http_method: method,
+                            path: path,
+                            description: desc || path
+                        });
+                    }
+                }
+                return ops;
+            }""")
+
+            if extracted:
+                ops = extracted
+
+        except Exception as e:
+            logger.warning(f"Operation extraction failed: {e}")
+
+        return ops
+
+    async def backfill_params(
+        self, api_ids: list[str], *, batch_size: int = 10, delay: float = 1.0
+    ) -> dict[str, int]:
+        """여러 API의 파라미터를 배치로 백필한다.
+
+        Args:
+            api_ids: 백필할 API ID 목록
+            batch_size: 동시 브라우저 수 (메모리 관리)
+            delay: API간 대기 시간(초)
+
+        Returns:
+            {"total": N, "success": N, "failed": N}
+        """
+        from playwright.async_api import async_playwright
+
+        stats = {"total": len(api_ids), "success": 0, "failed": 0}
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(locale="ko-KR")
+            page = await context.new_page()
+
+            try:
+                for i, api_id in enumerate(api_ids):
+                    raw_id = api_id.replace("DATAGOKR-", "")
+                    url = f"https://www.data.go.kr/data/{raw_id}/openapi.do"
+
+                    try:
+                        await page.goto(url, timeout=30000)
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+
+                        params = await self._extract_params(page)
+                        ops = await self._extract_operations(page)
+
+                        yield api_id, {"parameters": params, "operations": ops}
+                        stats["success"] += 1
+                    except Exception as e:
+                        logger.warning(f"[{i+1}/{len(api_ids)}] {api_id} failed: {e}")
+                        yield api_id, {"parameters": [], "operations": []}
+                        stats["failed"] += 1
+
+                    if (i + 1) % 50 == 0:
+                        logger.info(f"Backfill progress: {i+1}/{len(api_ids)}")
+
+                    await asyncio.sleep(delay)
+            finally:
+                await browser.close()
+
+        logger.info(f"Backfill complete: {stats}")
+
+
 async def bootstrap(max_pages: int = 1200) -> None:
     """카탈로그 부트스트랩 — DB 초기화 + 전수 스캔."""
     from catalog_store import CatalogStore

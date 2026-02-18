@@ -253,13 +253,47 @@ class ClaudeCLIInvoker:
 # ──────────────────────────── IdeationEngine ────────────────────────────
 
 
+class _DryRunClaude:
+    """드라이런 모드용 모의 Claude CLI — JSON 고정 응답 반환."""
+
+    def invoke(self, prompt: str, *, phase: int | None = None) -> dict | list:
+        import random
+        if phase == 2:
+            return {"hypotheses": [
+                {
+                    "id": f"H-{i+1:03d}",
+                    "service_name": f"드라이런 서비스 #{i+1}",
+                    "problem": "드라이런 문제 정의",
+                    "solution": "드라이런 솔루션",
+                    "target_buyer": random.choice(["지자체", "시민", "연구기관", "기업"]),
+                    "revenue_model": random.choice(["SaaS", "API 과금", "광고", "프리미엄"]),
+                    "opportunity_area": "드라이런 영역",
+                    "data_needs": [{"field_name": "테스트필드", "description": "테스트", "priority": "필수"}],
+                }
+                for i in range(5)
+            ]}
+        elif phase == 4:
+            return {
+                "timing_fit": round(random.uniform(0.3, 0.9), 2),
+                "revenue_reference": round(random.uniform(0.3, 0.9), 2),
+                "mvp_difficulty": round(random.uniform(0.3, 0.9), 2),
+            }
+        elif phase == 5:
+            return [
+                {"id": f"H-{i+1:03d}", "N": random.randint(2, 5), "U": random.randint(2, 5),
+                 "M": random.randint(2, 5), "R": random.randint(2, 5)}
+                for i in range(5)
+            ]
+        return {}
+
+
 class IdeationEngine:
     """6-Phase 파이프라인 오케스트레이터."""
 
-    def __init__(self, manual_signals: str | None = None) -> None:
+    def __init__(self, manual_signals: str | None = None, dry_run: bool = False) -> None:
         self.batch_id = generate_batch_id()
         self.budget = TimeBudget()
-        self.claude = ClaudeCLIInvoker()
+        self.claude = _DryRunClaude() if dry_run else ClaudeCLIInvoker()
         self._manual_signals = manual_signals
         self._logger = get_logger("engine")
 
@@ -545,11 +579,25 @@ class IdeationEngine:
                 self._logger.warning(f"Competitor search failed for '{service_name}': {e}")
                 competitors = []
 
-            # 시장 프록시 스코어
+            # 시장 프록시 스코어 — 가설 기반 동적 추정
+            target = hyp.get("target_buyer", "")
+            community_size = "large" if any(
+                kw in target for kw in ("공공", "전국", "정부", "지자체", "시민", "국민")
+            ) else "small" if any(
+                kw in target for kw in ("연구", "전문", "특정", "니치")
+            ) else "medium"
+
+            comp_count = len(competitors)
+            search_trend = (
+                "rising" if comp_count >= 5 else
+                "stable" if comp_count >= 2 else
+                "declining"
+            )
+
             proxy_score = proxy_scorer.score({
-                "similar_services_count": len(competitors),
-                "target_community_size": "medium",
-                "search_trend": "stable",
+                "similar_services_count": comp_count,
+                "target_community_size": community_size,
+                "search_trend": search_trend,
             })
 
             # Claude CLI로 추가 검증 (deep/standard 모드만)
@@ -679,10 +727,22 @@ class IdeationEngine:
                     }
 
             except Exception as e:
-                self._logger.warning(f"Phase 5 Claude scoring failed, using defaults: {e}")
+                self._logger.warning(f"Phase 5 Claude scoring failed, using heuristic defaults: {e}")
                 for v in validations:
                     v_score = default_v if is_skipped else (v.get("validation_score", 50) / 20)
-                    v["scores"] = {"N": 3, "U": 3, "M": 3, "R": 3, "V": min(float(v_score), 5.0)}
+                    # 휴리스틱 기반 점수 — Claude 실패 시에도 차별화
+                    feas = v.get("feasibility_pct", 50)
+                    val = v.get("validation_score", 50)
+                    comp = v.get("competitors_count", 0)
+                    n_score = max(1, min(5, 5 - (comp * 0.5)))           # 경쟁 적을수록 참신
+                    u_score = max(1, min(5, val / 20))                    # 검증 높을수록 긴급
+                    m_score = max(1, min(5, 1 + (comp * 0.6)))           # 경쟁 존재 = 시장 존재
+                    r_score = max(1, min(5, feas / 20))                   # 적합도 높을수록 실현 가능
+                    v["scores"] = {
+                        "N": round(n_score, 1), "U": round(u_score, 1),
+                        "M": round(m_score, 1), "R": round(r_score, 1),
+                        "V": min(float(v_score), 5.0),
+                    }
 
         # NUMR-V 가중 점수
         scored = scorer.score_batch(validations)
@@ -764,9 +824,10 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="API Ideation Engine v6.0")
     parser.add_argument("--manual-signals", type=str, help="수동 신호 텍스트 (Phase 1 스킵)")
+    parser.add_argument("--dry-run", action="store_true", help="Claude CLI 모킹 (테스트용)")
     args = parser.parse_args()
 
-    engine = IdeationEngine(manual_signals=args.manual_signals)
+    engine = IdeationEngine(manual_signals=args.manual_signals, dry_run=args.dry_run)
     result = engine.run()
 
     # 결과 출력

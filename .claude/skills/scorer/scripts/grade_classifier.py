@@ -49,12 +49,12 @@ class GradeClassifier:
 
         # 점수 기준 내림차순 정렬 (순위 산정용)
         scores = [idea.get("weighted_score", 0.0) for idea in scored_ideas]
-        sorted_scores = sorted(scores, reverse=True)
-        n = len(sorted_scores)
+        n = len(scores)
 
         for idea in scored_ideas:
             score = idea.get("weighted_score", 0.0)
-            rank = sorted_scores.index(score) + 1  # 1-based rank
+            # 동점 처리: 자신보다 높은 점수 개수 + 1 = 순위
+            rank = sum(1 for s in scores if s > score) + 1
             percentile_rank = (rank / n) * 100  # 상위 N%
 
             grade = self._assign_grade(score, percentile_rank)
