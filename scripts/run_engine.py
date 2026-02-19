@@ -234,24 +234,61 @@ class ClaudeCLIInvoker:
         return stdout
 
     @staticmethod
-    def _extract_json(raw: str) -> dict[str, Any]:
-        """Claude CLI 출력에서 JSON을 추출한다. 마크다운 펜스 제거."""
+    def _extract_json(raw: str) -> dict[str, Any] | list:
+        """Claude CLI 출력에서 JSON을 추출한다.
+
+        마크다운 펜스 제거 후, 첫 번째 완전한 JSON 객체/배열만 파싱한다.
+        Claude가 JSON 뒤에 설명 텍스트를 붙여도 안전하게 처리.
+        """
         # ```json ... ``` 패턴 제거
         cleaned = re.sub(r"```(?:json)?\s*", "", raw)
         cleaned = re.sub(r"```\s*$", "", cleaned, flags=re.MULTILINE)
         cleaned = cleaned.strip()
 
         # JSON 객체/배열 시작 위치 찾기
+        start = -1
         for i, ch in enumerate(cleaned):
             if ch in ("{", "["):
+                start = i
                 break
-        else:
+        if start == -1:
             raise ValueError(f"No JSON found in Claude CLI output (first 200 chars): {raw[:200]}")
 
+        # 매칭되는 닫는 괄호까지만 추출 (문자열 내부 괄호 무시)
+        open_ch = cleaned[start]
+        close_ch = "}" if open_ch == "{" else "]"
+        depth = 0
+        in_string = False
+        escape_next = False
+        end = start
+        for j in range(start, len(cleaned)):
+            ch = cleaned[j]
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\":
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == open_ch:
+                depth += 1
+            elif ch == close_ch:
+                depth -= 1
+                if depth == 0:
+                    end = j + 1
+                    break
+
+        if depth != 0:
+            raise ValueError(f"Unbalanced JSON in Claude CLI output (first 300 chars): {cleaned[start:start+300]}")
+
         try:
-            return json.loads(cleaned[i:])
+            return json.loads(cleaned[start:end])
         except json.JSONDecodeError as e:
-            raise ValueError(f"JSON parse error: {e}\nRaw (first 300 chars): {cleaned[i:i+300]}")
+            raise ValueError(f"JSON parse error: {e}\nRaw (first 300 chars): {cleaned[start:start+300]}")
 
 
 # ──────────────────────────── IdeationEngine ────────────────────────────
@@ -556,8 +593,13 @@ class IdeationEngine:
         # Claude CLI 호출
         raw_result = self.claude.invoke(full_prompt, phase=2)
 
-        # 결과에서 가설 추출
-        hypotheses = raw_result.get("hypotheses", [])
+        # 결과에서 가설 추출 (dict 또는 list 모두 처리)
+        if isinstance(raw_result, list):
+            hypotheses = raw_result
+        elif isinstance(raw_result, dict):
+            hypotheses = raw_result.get("hypotheses", [])
+        else:
+            hypotheses = []
 
         # 가설 ID 부여
         for i, h in enumerate(hypotheses):
