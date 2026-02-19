@@ -293,9 +293,98 @@ class IdeationEngine:
     def __init__(self, manual_signals: str | None = None, dry_run: bool = False) -> None:
         self.batch_id = generate_batch_id()
         self.budget = TimeBudget()
+        self.dry_run = dry_run
         self.claude = _DryRunClaude() if dry_run else ClaudeCLIInvoker()
         self._manual_signals = manual_signals
         self._logger = get_logger("engine")
+
+    # ── Pre-flight self-diagnostic ──
+
+    def _preflight_check(self) -> list[str]:
+        """환경 자가 진단. 실패 항목 목록을 반환한다 (빈 리스트 = 정상)."""
+        failures: list[str] = []
+
+        # 1) 필수 디렉터리 존재
+        from config import DATA_DIR, OUTPUT_DIR, LOG_DIR, CATALOG_DB_PATH
+        for label, p in [("DATA_DIR", DATA_DIR), ("OUTPUT_DIR", OUTPUT_DIR), ("LOG_DIR", LOG_DIR)]:
+            if not p.exists():
+                try:
+                    p.mkdir(parents=True, exist_ok=True)
+                    self._logger.info(f"Preflight: created missing directory {label}")
+                except OSError as e:
+                    failures.append(f"{label} missing and cannot create: {e}")
+
+        # 2) 카탈로그 DB 존재 + 읽기 가능
+        if not CATALOG_DB_PATH.exists():
+            failures.append(f"Catalog DB not found: {CATALOG_DB_PATH}")
+        else:
+            try:
+                import sqlite3
+                conn = sqlite3.connect(str(CATALOG_DB_PATH))
+                cur = conn.execute("SELECT COUNT(*) FROM apis")
+                count = cur.fetchone()[0]
+                conn.close()
+                if count == 0:
+                    failures.append("Catalog DB is empty (0 APIs)")
+                else:
+                    self._logger.info(f"Preflight: catalog OK ({count} APIs)")
+            except Exception as e:
+                failures.append(f"Catalog DB unreadable: {e}")
+
+        # 3) Claude CLI 사용 가능 (dry-run이면 스킵)
+        if not self.dry_run:
+            try:
+                proc = subprocess.run(
+                    ["claude", "--version"],
+                    capture_output=True, timeout=10,
+                    shell=(sys.platform == "win32"),
+                )
+                if proc.returncode != 0:
+                    failures.append(f"Claude CLI --version exit code {proc.returncode}")
+                else:
+                    self._logger.info("Preflight: Claude CLI OK")
+            except FileNotFoundError:
+                failures.append("Claude CLI not found in PATH")
+            except subprocess.TimeoutExpired:
+                failures.append("Claude CLI --version timed out (10s)")
+            except Exception as e:
+                failures.append(f"Claude CLI check failed: {e}")
+
+        # 4) 디스크 여유 공간 (최소 100MB)
+        try:
+            import shutil
+            usage = shutil.disk_usage(str(_PROJECT_ROOT))
+            free_mb = usage.free / (1024 * 1024)
+            if free_mb < 100:
+                failures.append(f"Disk space critically low: {free_mb:.0f}MB free")
+            else:
+                self._logger.info(f"Preflight: disk OK ({free_mb:.0f}MB free)")
+        except Exception as e:
+            self._logger.warning(f"Preflight: disk check skipped — {e}")
+
+        # 5) 핵심 모듈 임포트 가능
+        required_modules = [
+            "signal_aggregator", "semantic_matcher", "feasibility",
+            "numrv_scorer", "grade_classifier", "discord_notifier",
+        ]
+        for mod in required_modules:
+            try:
+                __import__(mod)
+            except ImportError as e:
+                failures.append(f"Module '{mod}' import failed: {e}")
+
+        return failures
+
+    # ── Discord system alert helper ──
+
+    def _send_system_alert(self, message: str) -> None:
+        """Discord 시스템 경고를 전송한다 (실패해도 무시)."""
+        try:
+            from discord_notifier import DiscordNotifier
+            notifier = DiscordNotifier()
+            notifier.notify_system_alert(message)
+        except Exception as e:
+            self._logger.warning(f"System alert send failed (non-fatal): {e}")
 
     def run(self) -> dict[str, Any]:
         """전체 파이프라인을 순차 실행한다."""
@@ -308,6 +397,20 @@ class IdeationEngine:
             "success": False,
             "error": None,
         }
+
+        # Pre-flight check
+        preflight_failures = self._preflight_check()
+        if preflight_failures:
+            msg = "Pre-flight check failed:\n" + "\n".join(f"  - {f}" for f in preflight_failures)
+            self._logger.error(msg)
+            result["error"] = msg
+            result["finished_at"] = kst_now().isoformat()
+            result["total_duration_sec"] = self.budget.elapsed_sec
+            self._send_system_alert(
+                f"**Engine pre-flight FAILED** (batch {self.batch_id})\n"
+                + "\n".join(f"- {f}" for f in preflight_failures)
+            )
+            return result
 
         try:
             # Phase 1: 맥락 수집
@@ -339,6 +442,12 @@ class IdeationEngine:
         except Exception as e:
             self._logger.error(f"Pipeline failed: {e}", exc_info=True)
             result["error"] = str(e)
+            # Discord alert on pipeline failure
+            self._send_system_alert(
+                f"**Pipeline FAILED** (batch {self.batch_id})\n"
+                f"Error: {str(e)[:400]}\n"
+                f"Duration: {self.budget.elapsed_sec:.0f}s"
+            )
 
         result["finished_at"] = kst_now().isoformat()
         result["total_duration_sec"] = self.budget.elapsed_sec
