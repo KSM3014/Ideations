@@ -303,21 +303,21 @@ function Show-RunSummary {
   }
 }
 
-$codexCmd = Get-Command codex -ErrorAction SilentlyContinue
-if ($codexCmd) {
-  $codexPath = $codexCmd.Source
+$claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+if ($claudeCmd) {
+  $claudePath = $claudeCmd.Source
 } else {
-  $fallback = Join-Path $env:APPDATA "npm/codex.cmd"
+  $fallback = Join-Path $env:APPDATA "npm/claude.cmd"
   if (Test-Path $fallback) {
-    $codexPath = $fallback
+    $claudePath = $fallback
   } else {
-    throw "codex command not found in PATH and fallback path."
+    throw "claude command not found in PATH and fallback path."
   }
 }
 
 Write-Host "[quality-gate] loop started in $workspace"
 Write-Host "[quality-gate] interval: $IntervalMinutes minutes"
-Write-Host "[quality-gate] codex: $codexPath"
+Write-Host "[quality-gate] claude: $claudePath"
 Write-Host "[quality-gate] auto init git: $AutoInitGit"
 Write-Host "[quality-gate] run once: $RunOnce"
 Write-Host "[quality-gate] stop with Ctrl+C"
@@ -344,16 +344,16 @@ while ($true) {
   $runPrompt = Build-RunPrompt -BasePrompt $Prompt -IssueSummary $issueSummary
 
   try {
-    $runOutputObjects = & $codexPath exec $runPrompt 2>&1
+    $runOutputObjects = & $claudePath -p $runPrompt 2>&1
     $runLines = Normalize-Lines -OutputObjects @($runOutputObjects)
     if ($runLines.Count -eq 0) {
-      $runLines = @("[quality-gate] codex returned no output.")
+      $runLines = @("[quality-gate] claude returned no output.")
     }
 
     $runLines | Out-File -FilePath $dailyLog -Append -Encoding utf8
 
     if ($LASTEXITCODE -ne 0) {
-      "codex exit code: $LASTEXITCODE" | Out-File -FilePath $dailyLog -Append -Encoding utf8
+      "claude exit code: $LASTEXITCODE" | Out-File -FilePath $dailyLog -Append -Encoding utf8
     }
 
     $summary = Get-ReportSummary -Lines $runLines

@@ -3,27 +3,50 @@ const { createApp, ref, computed, onMounted } = Vue;
 createApp({
   setup() {
     const batches = ref([]);
-    const health = ref(null);
+    const stats = ref(null);
+    const curationState = ref({});
     const loading = ref(true);
+    const toast = ref('');
+    const refreshedAt = ref(new Date().toISOString());
+
     const gradeFilter = ref('');
-    const dateFilter = ref('');
+    const curationFilter = ref('');
     const searchQuery = ref('');
 
+    // All ideas flat list
     const allIdeas = computed(() => {
       const ideas = [];
       for (const batch of batches.value) {
         for (const idea of (batch.ideas || [])) {
-          ideas.push({ ...idea, batch_id: batch.batch_id, batch_timestamp: batch.timestamp });
+          const uid = idea.id || idea.hypothesis_id || `${batch.batch_id}-${ideas.length}`;
+          ideas.push({ ...idea, _uid: uid, _batch_id: batch.batch_id, _batch_ts: batch.timestamp });
         }
       }
+      ideas.sort((a, b) => (b.weighted_score || b.numrv_score || 0) - (a.weighted_score || a.numrv_score || 0));
       return ideas;
     });
 
+    function getCuration(idea) {
+      const id = idea.id || idea.hypothesis_id || '';
+      const entry = curationState.value[id];
+      return entry ? entry.status : '';
+    }
+
     const filteredIdeas = computed(() => {
       let result = allIdeas.value;
+
       if (gradeFilter.value) {
         result = result.filter(i => i.grade === gradeFilter.value);
       }
+
+      if (curationFilter.value) {
+        if (curationFilter.value === 'uncurated') {
+          result = result.filter(i => !getCuration(i));
+        } else {
+          result = result.filter(i => getCuration(i) === curationFilter.value);
+        }
+      }
+
       if (searchQuery.value) {
         const q = searchQuery.value.toLowerCase();
         result = result.filter(i =>
@@ -32,31 +55,23 @@ createApp({
           (i.concept || i.solution || '').toLowerCase().includes(q)
         );
       }
-      // 점수 내림차순
-      result.sort((a, b) => (b.numrv_score || b.weighted_score || 0) - (a.numrv_score || a.weighted_score || 0));
+
       return result;
     });
 
-    const gradeDist = computed(() => {
-      const dist = {};
-      for (const idea of allIdeas.value) {
-        const g = idea.grade || '?';
-        dist[g] = (dist[g] || 0) + 1;
-      }
-      return dist;
-    });
-
     function formatTime(isoStr) {
-      if (!isoStr) return '';
-      const d = new Date(isoStr);
-      return d.toLocaleString('ko-KR');
+      if (!isoStr) return '-';
+      return new Date(isoStr).toLocaleString('ko-KR');
+    }
+
+    function showToast(msg) {
+      toast.value = msg;
+      setTimeout(() => { toast.value = ''; }, 3000);
     }
 
     async function fetchBatches() {
       try {
-        const params = new URLSearchParams();
-        if (dateFilter.value) params.set('date', dateFilter.value);
-        const resp = await fetch(`/api/batches?${params}`);
+        const resp = await fetch('/api/batches');
         batches.value = await resp.json();
       } catch (e) {
         console.error('Failed to fetch batches:', e);
@@ -65,12 +80,66 @@ createApp({
       }
     }
 
-    async function fetchHealth() {
+    async function fetchStats() {
       try {
-        const resp = await fetch('/api/health');
-        health.value = await resp.json();
+        const resp = await fetch('/api/curation/stats');
+        stats.value = await resp.json();
       } catch (e) {
-        console.error('Failed to fetch health:', e);
+        console.error('Failed to fetch stats:', e);
+      }
+    }
+
+    async function fetchAll() {
+      await Promise.all([fetchBatches(), fetchStats()]);
+      refreshedAt.value = new Date().toISOString();
+      showToast('Refreshed');
+    }
+
+    async function setCuration(idea, status) {
+      const id = idea.id || idea.hypothesis_id;
+      if (!id) return;
+
+      const current = getCuration(idea);
+      const newStatus = current === status ? 'none' : status;
+
+      try {
+        await fetch(`/api/curation/${encodeURIComponent(id)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: newStatus }),
+        });
+
+        if (newStatus === 'none') {
+          delete curationState.value[id];
+        } else {
+          curationState.value[id] = { status: newStatus };
+        }
+        fetchStats();
+      } catch (e) {
+        showToast('Failed to update curation');
+      }
+    }
+
+    async function resetCuration() {
+      if (!confirm('Reset all curation state?')) return;
+      try {
+        await fetch('/api/curation', { method: 'DELETE' });
+        curationState.value = {};
+        fetchStats();
+        showToast('Curation reset');
+      } catch (e) {
+        showToast('Failed to reset');
+      }
+    }
+
+    async function copyPublishedMD() {
+      try {
+        const resp = await fetch('/api/curation/export/md');
+        const data = await resp.json();
+        await navigator.clipboard.writeText(data.markdown);
+        showToast(`Copied ${data.count} published ideas to clipboard`);
+      } catch (e) {
+        showToast('Failed to copy');
       }
     }
 
@@ -82,25 +151,23 @@ createApp({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ hypothesis_id: id, action }),
         });
-        alert(`피드백 전송 완료: ${action}`);
+        showToast(`Feedback: ${action}`);
       } catch (e) {
-        console.error('Feedback failed:', e);
+        showToast('Feedback failed');
       }
     }
 
     onMounted(() => {
-      fetchBatches();
-      fetchHealth();
-      // 5분마다 갱신
-      setInterval(fetchBatches, 5 * 60 * 1000);
-      setInterval(fetchHealth, 60 * 1000);
+      fetchAll();
+      setInterval(fetchAll, 5 * 60 * 1000);
     });
 
     return {
-      batches, health, loading,
-      gradeFilter, dateFilter, searchQuery,
-      filteredIdeas, gradeDist,
-      formatTime, sendFeedback,
+      batches, stats, loading, toast, refreshedAt,
+      gradeFilter, curationFilter, searchQuery,
+      allIdeas, filteredIdeas, getCuration, curationState,
+      formatTime, fetchAll, setCuration, resetCuration,
+      copyPublishedMD, sendFeedback, showToast,
     };
   }
 }).mount('#app');

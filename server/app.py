@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from server.routers import ideas, feedback, health
+from server.routers import ideas, feedback, health, curation
 
 _START_TIME = time.monotonic()
 
@@ -27,6 +27,7 @@ app = FastAPI(title="API Ideation Engine v6.0", version="6.0.0")
 app.include_router(ideas.router, prefix="/api")
 app.include_router(feedback.router, prefix="/api")
 app.include_router(health.router, prefix="/api")
+app.include_router(curation.router, prefix="/api")
 
 # 루트 → 대시보드 리다이렉트
 @app.get("/")
