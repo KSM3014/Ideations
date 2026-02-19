@@ -320,6 +320,15 @@ class _DryRunClaude:
                 for i in range(5)
             ]}
         elif phase == 4:
+            # 배치 호출인 경우 리스트 반환
+            if "배치" in prompt or "batch" in prompt.lower():
+                return [
+                    {"id": f"H-{i+1:03d}",
+                     "timing_fit": round(random.uniform(0.3, 0.9), 2),
+                     "revenue_reference": round(random.uniform(0.3, 0.9), 2),
+                     "mvp_difficulty": round(random.uniform(0.3, 0.9), 2)}
+                    for i in range(15)
+                ]
             return {
                 "timing_fit": round(random.uniform(0.3, 0.9), 2),
                 "revenue_reference": round(random.uniform(0.3, 0.9), 2),
@@ -531,10 +540,25 @@ class IdeationEngine:
             ]
         else:
             try:
-                from signal_aggregator import collect_signals
+                from signal_aggregator import collect_signals, URLCache
 
                 signals = asyncio.run(collect_signals())
-                self._logger.info(f"Phase 1: collected {len(signals)} signals")
+                self._logger.info(f"Phase 1: collected {len(signals)} new signals")
+
+                # 신규 신호 0건이면 최근 캐시에서 타이틀 기반 신호 보충
+                if not signals:
+                    self._logger.info("Phase 1: 0 new signals, loading recent cached titles as context")
+                    cache = URLCache()
+                    cached_urls = list(cache._cache.keys())[-10:]  # 최근 10개
+                    for url in cached_urls:
+                        signals.append({
+                            "source": "cache_recent",
+                            "title": url.split("/")[-1][:80] or url[:80],
+                            "url": url,
+                            "snippet": "",
+                            "collected_at": kst_now().isoformat(),
+                        })
+                    self._logger.info(f"Phase 1: supplemented {len(signals)} cached signals")
             except Exception as e:
                 self._logger.warning(f"Phase 1: signal collection failed, continuing with empty — {e}")
                 signals = []
@@ -803,6 +827,73 @@ class IdeationEngine:
         proxy_scorer = MarketProxyScorer()
         validation_scorer = ValidationScorer()
 
+        # Claude CLI 검증 — depth에 따라 개별/배치 호출
+        if depth in ("deep", "standard"):
+            # 개별 호출: 가설별 상세 검증
+            for hyp in passed_hypotheses:
+                try:
+                    prompt_path = PROMPTS_DIR / "phase4_validation.md"
+                    prompt_template = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
+                    sn = hyp.get("service_name", "")
+                    validation_prompt = (
+                        f"{prompt_template}\n\n"
+                        f"## 검증 대상\n"
+                        f"- 서비스: {sn}\n"
+                        f"- 문제: {hyp.get('problem', '')}\n"
+                        f"- 솔루션: {hyp.get('solution', '')}\n"
+                        f"- 타깃: {hyp.get('target_buyer', '')}\n"
+                        f"- 수익 모델: {hyp.get('revenue_model', '')}\n"
+                        f"\n응답은 JSON으로: "
+                        f'{{"timing_fit": 0.0~1.0, "revenue_reference": 0.0~1.0, "mvp_difficulty": 0.0~1.0}}'
+                    )
+                    vr = self.claude.invoke(validation_prompt, phase=4)
+                    hyp["_timing_fit"] = float(vr.get("timing_fit", 0.5))
+                    hyp["_revenue_reference"] = float(vr.get("revenue_reference", 0.5))
+                    hyp["_mvp_difficulty"] = float(vr.get("mvp_difficulty", 0.5))
+                except Exception as e:
+                    self._logger.warning(f"Claude validation failed for '{sn}': {e}")
+
+        elif depth == "light":
+            # 배치 호출: 전체 가설을 한번에 검증 (시간 절약)
+            try:
+                batch_items = []
+                for hyp in passed_hypotheses:
+                    batch_items.append({
+                        "id": hyp.get("id", ""),
+                        "service_name": hyp.get("service_name", ""),
+                        "problem": hyp.get("problem", "")[:80],
+                        "target": hyp.get("target_buyer", ""),
+                        "revenue": hyp.get("revenue_model", ""),
+                    })
+                batch_prompt = (
+                    "아래 서비스 아이디어 배치를 시장 관점에서 빠르게 검증하세요.\n"
+                    "각 아이디어에 timing_fit(시기적합성), revenue_reference(수익가능성), "
+                    "mvp_difficulty(MVP난이도, 낮을수록 좋음)를 0.0~1.0으로 평가하세요.\n\n"
+                    f"```json\n{json.dumps(batch_items, ensure_ascii=False, indent=2)}\n```\n\n"
+                    "응답은 JSON 배열로:\n"
+                    '[{"id": "H-001", "timing_fit": 0.7, "revenue_reference": 0.6, "mvp_difficulty": 0.4}, ...]'
+                )
+                batch_raw = self.claude.invoke(batch_prompt, phase=4)
+                if isinstance(batch_raw, list):
+                    vmap = {item["id"]: item for item in batch_raw if isinstance(item, dict)}
+                elif isinstance(batch_raw, dict) and "validations" in batch_raw:
+                    vmap = {item["id"]: item for item in batch_raw["validations"] if isinstance(item, dict)}
+                else:
+                    vmap = {}
+
+                for hyp in passed_hypotheses:
+                    hid = hyp.get("id", "")
+                    v = vmap.get(hid, {})
+                    hyp["_timing_fit"] = float(v.get("timing_fit", 0.5))
+                    hyp["_revenue_reference"] = float(v.get("revenue_reference", 0.5))
+                    hyp["_mvp_difficulty"] = float(v.get("mvp_difficulty", 0.5))
+
+                self._logger.info(f"Phase 4: batch validation done for {len(vmap)} hypotheses")
+            except Exception as e:
+                self._logger.warning(f"Phase 4 batch validation failed, using defaults: {e}")
+
+        # simplified 모드: Claude CLI 스킵, 기본값 사용
+
         validations = []
 
         for hyp in passed_hypotheses:
@@ -836,34 +927,10 @@ class IdeationEngine:
                 "search_trend": search_trend,
             })
 
-            # Claude CLI로 추가 검증 (deep/standard 모드만)
-            timing_fit = 0.5
-            revenue_reference = 0.5
-            mvp_difficulty = 0.5
-
-            if depth in ("deep", "standard"):
-                try:
-                    prompt_path = PROMPTS_DIR / "phase4_validation.md"
-                    prompt_template = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
-
-                    validation_prompt = (
-                        f"{prompt_template}\n\n"
-                        f"## 검증 대상\n"
-                        f"- 서비스: {service_name}\n"
-                        f"- 문제: {hyp.get('problem', '')}\n"
-                        f"- 솔루션: {hyp.get('solution', '')}\n"
-                        f"- 타깃: {hyp.get('target_buyer', '')}\n"
-                        f"- 수익 모델: {hyp.get('revenue_model', '')}\n"
-                        f"- 경쟁사 수: {len(competitors)}개\n"
-                        f"\n응답은 JSON으로: "
-                        f'{{"timing_fit": 0.0~1.0, "revenue_reference": 0.0~1.0, "mvp_difficulty": 0.0~1.0}}'
-                    )
-                    validation_raw = self.claude.invoke(validation_prompt, phase=4)
-                    timing_fit = float(validation_raw.get("timing_fit", 0.5))
-                    revenue_reference = float(validation_raw.get("revenue_reference", 0.5))
-                    mvp_difficulty = float(validation_raw.get("mvp_difficulty", 0.5))
-                except Exception as e:
-                    self._logger.warning(f"Claude validation failed for '{service_name}', using defaults: {e}")
+            # Claude CLI 검증값 (아래 배치/개별 호출에서 채워짐)
+            timing_fit = hyp.get("_timing_fit", 0.5)
+            revenue_reference = hyp.get("_revenue_reference", 0.5)
+            mvp_difficulty = hyp.get("_mvp_difficulty", 0.5)
 
             # 종합 검증 점수
             validation_result = validation_scorer.calculate(
@@ -880,6 +947,10 @@ class IdeationEngine:
             hyp["validation_passed"] = validation_result["passed"]
             hyp["validation_breakdown"] = validation_result["breakdown"]
             hyp["competitors_count"] = len(competitors)
+            # 임시 필드 정리
+            hyp.pop("_timing_fit", None)
+            hyp.pop("_revenue_reference", None)
+            hyp.pop("_mvp_difficulty", None)
             validations.append(hyp)
 
         passed_validations = [v for v in validations if v.get("validation_passed")]
