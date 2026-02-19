@@ -204,11 +204,15 @@ class ClaudeCLIInvoker:
         )
 
     def _run_subprocess(self, prompt: str) -> str:
-        """claude -p 를 subprocess로 실행하고 stdout을 반환한다."""
+        """claude -p 를 subprocess로 실행하고 stdout을 반환한다.
+
+        프롬프트는 stdin으로 전달한다 (Windows 명령줄 8191자 제한 우회).
+        """
         env = os.environ.copy()
         env.pop("CLAUDECODE", None)  # 중첩 세션 방지 우회
         proc = subprocess.run(
-            [self.cmd, "-p", prompt],
+            [self.cmd, "-p"],
+            input=prompt.encode("utf-8"),
             capture_output=True,
             timeout=self.timeout,
             shell=(sys.platform == "win32"),  # Windows: .cmd 파일 실행 필요
