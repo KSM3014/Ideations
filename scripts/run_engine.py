@@ -297,8 +297,14 @@ class ClaudeCLIInvoker:
 class _DryRunClaude:
     """드라이런 모드용 모의 Claude CLI — JSON 고정 응답 반환."""
 
-    def invoke(self, prompt: str, *, phase: int | None = None) -> dict | list:
+    def invoke(self, prompt: str, *, phase: int | str | None = None) -> dict | list:
         import random
+        if phase == "assumptions":
+            return [
+                {"keyword": "배달 수수료 경감 플랫폼", "context": "자영업자 배달앱 수수료 부담 해결"},
+                {"keyword": "AI 의료 영상 진단", "context": "의료 AI 도입 가속화 트렌드"},
+                {"keyword": "소분 배송 매칭", "context": "1인 가구 증가에 따른 소분 수요"},
+            ]
         if phase == 2:
             return {"hypotheses": [
                 {
@@ -331,12 +337,18 @@ class _DryRunClaude:
 class IdeationEngine:
     """6-Phase 파이프라인 오케스트레이터."""
 
-    def __init__(self, manual_signals: str | None = None, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        manual_signals: str | None = None,
+        assumptions: str | None = None,
+        dry_run: bool = False,
+    ) -> None:
         self.batch_id = generate_batch_id()
         self.budget = TimeBudget()
         self.dry_run = dry_run
         self.claude = _DryRunClaude() if dry_run else ClaudeCLIInvoker()
         self._manual_signals = manual_signals
+        self._assumptions = assumptions
         self._logger = get_logger("engine")
 
     # ── Pre-flight self-diagnostic ──
@@ -503,8 +515,11 @@ class IdeationEngine:
         """Phase 1: 신호 수집 — signal_aggregator 사용."""
         self.budget.start_phase(1)
 
-        if self._manual_signals:
-            self._logger.info(f"Phase 1: manual signals provided — skipping crawlers")
+        if self._assumptions:
+            self._logger.info("Phase 1: processing user assumptions via Claude CLI")
+            signals = self._assumptions_to_signals(self._assumptions)
+        elif self._manual_signals:
+            self._logger.info("Phase 1: manual signals provided — skipping crawlers")
             signals = [
                 {
                     "source": "manual",
@@ -526,6 +541,72 @@ class IdeationEngine:
 
         elapsed = self.budget.end_phase(1)
         return {"batch_id": self.batch_id, "signals": signals, "duration_sec": elapsed}
+
+    def _assumptions_to_signals(self, assumptions_text: str) -> list[dict[str, Any]]:
+        """사용자 가정/관찰을 Claude CLI로 분석하여 구조화된 신호 키워드로 변환한다."""
+        prompt = (
+            "당신은 시장 트렌드 분석가입니다.\n"
+            "사용자가 작성한 가정/관찰/아이디어를 분석하여 "
+            "공공 데이터 API 기반 서비스 아이디어 발굴에 활용할 핵심 키워드를 추출하세요.\n\n"
+            f"## 사용자 입력\n{assumptions_text}\n\n"
+            "## 지시사항\n"
+            "- 입력에서 3~7개의 핵심 시장 신호/키워드를 추출하세요\n"
+            "- 각 키워드는 구체적인 시장 기회나 트렌드를 나타내야 합니다\n"
+            "- 너무 추상적이거나 일반적인 키워드는 피하세요\n"
+            "- 한국 시장 맥락에 맞게 해석하세요\n\n"
+            "## 출력 형식 (JSON만 반환, 다른 텍스트 없이)\n"
+            '[{"keyword": "핵심 키워드", "context": "이 키워드가 왜 서비스 기회인지 1줄 설명"}]'
+        )
+
+        try:
+            raw = self.claude.invoke(prompt, phase="assumptions")
+            # dry-run은 이미 파싱된 dict/list 반환, 실제 Claude는 문자열 반환
+            if isinstance(raw, (dict, list)):
+                parsed = raw
+            else:
+                parsed = ClaudeCLIInvoker._extract_json(raw)
+
+            if isinstance(parsed, dict):
+                items = parsed.get("keywords", parsed.get("signals", [parsed]))
+            elif isinstance(parsed, list):
+                items = parsed
+            else:
+                items = []
+
+            now = kst_now().isoformat()
+            signals = []
+            for item in items:
+                kw = item.get("keyword", "") if isinstance(item, dict) else str(item)
+                ctx = item.get("context", "") if isinstance(item, dict) else ""
+                if kw:
+                    signals.append({
+                        "source": "assumptions",
+                        "title": kw.strip(),
+                        "url": "",
+                        "snippet": ctx.strip() if ctx else kw.strip(),
+                        "collected_at": now,
+                    })
+
+            self._logger.info(
+                f"Phase 1: extracted {len(signals)} keywords from assumptions: "
+                f"{[s['title'] for s in signals]}"
+            )
+            return signals if signals else self._assumptions_fallback(assumptions_text)
+
+        except Exception as e:
+            self._logger.warning(f"Phase 1: assumption processing failed — {e}")
+            return self._assumptions_fallback(assumptions_text)
+
+    def _assumptions_fallback(self, text: str) -> list[dict[str, Any]]:
+        """Claude CLI 실패 시 원본 텍스트를 그대로 신호로 사용한다."""
+        self._logger.info("Phase 1: using raw assumptions as fallback signal")
+        return [{
+            "source": "assumptions",
+            "title": text[:200],
+            "url": "",
+            "snippet": text,
+            "collected_at": kst_now().isoformat(),
+        }]
 
     # ── Phase 2: 가설 생성 ──
 
@@ -979,10 +1060,15 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="API Ideation Engine v6.0")
     parser.add_argument("--manual-signals", type=str, help="수동 신호 텍스트 (Phase 1 스킵)")
+    parser.add_argument("--assumptions", type=str, help="사용자 가정/관찰 → LLM이 키워드 추출")
     parser.add_argument("--dry-run", action="store_true", help="Claude CLI 모킹 (테스트용)")
     args = parser.parse_args()
 
-    engine = IdeationEngine(manual_signals=args.manual_signals, dry_run=args.dry_run)
+    engine = IdeationEngine(
+        manual_signals=args.manual_signals,
+        assumptions=args.assumptions,
+        dry_run=args.dry_run,
+    )
     result = engine.run()
 
     # 결과 출력
