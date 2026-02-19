@@ -85,6 +85,22 @@ class ReportGenerator:
             g = idea.get("grade", "?")
             grade_dist[g] = grade_dist.get(g, 0) + 1
 
+        # 상위 아이디어 (점수 내림차순, 최대 10개)
+        sorted_ideas = sorted(
+            all_ideas,
+            key=lambda x: x.get("weighted_score", x.get("numrv_score", 0)),
+            reverse=True,
+        )
+        top_ideas = []
+        for idea in sorted_ideas[:10]:
+            top_ideas.append({
+                "service_name": idea.get("service_name", ""),
+                "grade": idea.get("grade", "?"),
+                "score": idea.get("weighted_score", idea.get("numrv_score", 0)),
+                "problem": idea.get("problem", "")[:100],
+                "target": idea.get("target_buyer", idea.get("target", "")),
+            })
+
         report = {
             "type": "weekly",
             "period_start": dates[-1],
@@ -93,6 +109,7 @@ class ReportGenerator:
             "total_ideas": len(all_ideas),
             "grade_distribution": grade_dist,
             "sa_count": grade_dist.get("S", 0) + grade_dist.get("A", 0),
+            "top_ideas": top_ideas,
             "generated_at": kst_now().isoformat(),
         }
 
@@ -102,3 +119,22 @@ class ReportGenerator:
         logger.info(f"Weekly report generated: {report_path}")
 
         return report
+
+
+# ──────────────────────────── CLI ────────────────────────────
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="리포트 생성기")
+    parser.add_argument("--type", choices=["daily", "weekly"], default="daily")
+    parser.add_argument("--date", type=str, default=None, help="YYYY-MM-DD (일간 전용)")
+    args = parser.parse_args()
+
+    gen = ReportGenerator()
+    if args.type == "weekly":
+        report = gen.generate_weekly()
+    else:
+        report = gen.generate_daily(args.date)
+
+    print(json.dumps(report, ensure_ascii=False, indent=2))

@@ -856,6 +856,8 @@ class IdeationEngine:
         elif depth == "light":
             # 배치 호출: 전체 가설을 한번에 검증 (시간 절약)
             try:
+                prompt_path = PROMPTS_DIR / "phase4_validation.md"
+                prompt_template = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
                 batch_items = []
                 for hyp in passed_hypotheses:
                     batch_items.append({
@@ -866,10 +868,10 @@ class IdeationEngine:
                         "revenue": hyp.get("revenue_model", ""),
                     })
                 batch_prompt = (
-                    "아래 서비스 아이디어 배치를 시장 관점에서 빠르게 검증하세요.\n"
-                    "각 아이디어에 timing_fit(시기적합성), revenue_reference(수익가능성), "
-                    "mvp_difficulty(MVP난이도, 낮을수록 좋음)를 0.0~1.0으로 평가하세요.\n\n"
+                    f"{prompt_template}\n\n"
+                    f"## 배치 검증 대상\n"
                     f"```json\n{json.dumps(batch_items, ensure_ascii=False, indent=2)}\n```\n\n"
+                    "각 아이디어에 대해 위 평가 기준으로 점수를 부여하세요.\n"
                     "응답은 JSON 배열로:\n"
                     '[{"id": "H-001", "timing_fit": 0.7, "revenue_reference": 0.6, "mvp_difficulty": 0.4}, ...]'
                 )
